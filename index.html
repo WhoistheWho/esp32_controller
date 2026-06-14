@@ -10,9 +10,7 @@
     <title>ESP32 Web Bluetooth</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=change_history,square,stacked_line_chart,user_attributes,waves" />
     <style>
-        *, *::before, *::after {
-            box-sizing: border-box;
-        }
+        *, *::before, *::after { box-sizing: border-box; }
 
         body {
             font-family: sans-serif;
@@ -26,22 +24,19 @@
             -webkit-tap-highlight-color: transparent;
         }
 
-        h1 {
-            margin: 0 0 8px;
-            font-size: 1.5rem;
-        }
+        h1 { margin: 0 0 8px; font-size: 1.5rem; }
 
-        #status {
-            color: gray;
-            margin-bottom: 12px;
-            font-size: 0.9rem;
-        }
+        #status { color: gray; margin-bottom: 12px; font-size: 0.9rem; }
 
-        #connectBtn {
-            display: block;
-            width: 100%;
+        .connect-row {
+            display: flex;
+            gap: 8px;
             max-width: 400px;
-            margin: 0 auto 16px;
+            margin: 0 auto 12px;
+        }
+
+        #connectBtn, #disconnectBtn {
+            flex: 1;
             padding: 16px;
             font-size: 1.1rem;
             cursor: pointer;
@@ -51,18 +46,33 @@
             touch-action: manipulation;
         }
 
-        #connectBtn:active {
-            background: #f0f0f0;
+        #connectBtn:active, #disconnectBtn:active { background: #f0f0f0; }
+        #connectBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+        #disconnectBtn { display: none; }
+
+        #estopBtn {
+            display: none;
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto 16px;
+            padding: 20px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            cursor: pointer;
+            border: 3px solid #c62828;
+            border-radius: 8px;
+            background: #f44336;
+            color: white;
+            touch-action: manipulation;
+            transition: transform 0.1s, background 0.1s;
         }
 
-        #connectBtn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
+        #estopBtn:active {
+            background: #b71c1c;
+            transform: scale(0.97);
         }
 
-        #controls {
-            margin-top: 8px;
-        }
+        #controls { margin-top: 8px; }
 
         .button-row {
             display: flex;
@@ -85,24 +95,22 @@
             background: white;
             cursor: pointer;
             touch-action: manipulation;
-            transition: transform 0.1s, background-color 0.1s;
+            transition: transform 0.1s, background-color 0.1s, border-color 0.1s;
         }
 
-        .icon-btn:active {
-            transform: scale(0.9);
-            background-color: #f0f0f0;
+        .icon-btn:active { transform: scale(0.9); background-color: #f0f0f0; }
+
+        .icon-btn.active {
+            background-color: #4CAF50;
+            border-color: #388E3C;
+            color: white;
         }
 
-        .icon-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
+        .icon-btn.active .material-symbols-outlined {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 40;
         }
 
-        .icon-btn img {
-            width: 80%;
-            height: auto;
-            pointer-events: none;
-        }
+        .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         .material-symbols-outlined {
             font-size: clamp(28px, 7vw, 42px);
@@ -110,9 +118,7 @@
             pointer-events: none;
         }
 
-        .slider-group {
-            margin-bottom: 16px;
-        }
+        .slider-group { margin-bottom: 16px; }
 
         .slider-group label {
             display: block;
@@ -135,23 +141,28 @@
     <h1>ESP32 Control</h1>
     <p id="status">Disconnected</p>
 
-    <button id="connectBtn">Connect to ESP32</button>
+    <div class="connect-row">
+        <button id="connectBtn">Connect to ESP32</button>
+        <button id="disconnectBtn">Disconnect</button>
+    </div>
+
+    <button id="estopBtn">&#9724; STOP</button>
 
     <div id="controls">
         <div class="button-row">
-            <button class="icon-btn" id="btn1" onclick="sendBtn('1')" disabled>
+            <button class="icon-btn" id="btn1" onclick="sendBtn('1', this)" disabled>
                 <span class="material-symbols-outlined">change_history</span>
             </button>
-            <button class="icon-btn" id="btn2" onclick="sendBtn('3')" disabled>
+            <button class="icon-btn" id="btn2" onclick="sendBtn('3', this)" disabled>
                 <span class="material-symbols-outlined">square</span>
             </button>
-            <button class="icon-btn" id="btn3" onclick="sendBtn('0')" disabled>
+            <button class="icon-btn" id="btn3" onclick="sendBtn('0', this)" disabled>
                 <span class="material-symbols-outlined">waves</span>
             </button>
-            <button class="icon-btn" id="btn4" onclick="sendBtn('2')" disabled>
+            <button class="icon-btn" id="btn4" onclick="sendBtn('2', this)" disabled>
                 <span class="material-symbols-outlined">stacked_line_chart</span>
             </button>
-            <button class="icon-btn" id="btn5" onclick="sendBtn('4')" disabled>
+            <button class="icon-btn" id="btn5" onclick="sendBtn('4', this)" disabled>
                 <span class="material-symbols-outlined">user_attributes</span>
             </button>
         </div>
@@ -171,44 +182,68 @@
         const serviceUUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
         const characteristicUUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-        let bleDevice;
-        let bleCharacteristic;
-        let pollData;
+        let bleDevice, bleCharacteristic, pollData, wakeLock;
+        let reconnectDelay = 1000;
+        let reconnectTimer = null;
+        let userDisconnected = false;
+        let activeBtn = null;
 
-        const connectBtn = document.getElementById('connectBtn');
-        const statusText = document.getElementById('status');
-        const slider1 = document.getElementById('slider1');
-        const slider2 = document.getElementById('slider2');
-        const val1Text = document.getElementById('val1');
-        const val2Text = document.getElementById('val2');
+        const connectBtn    = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const estopBtn      = document.getElementById('estopBtn');
+        const statusText    = document.getElementById('status');
+        const slider1       = document.getElementById('slider1');
+        const slider2       = document.getElementById('slider2');
+        const val1Text      = document.getElementById('val1');
+        const val2Text      = document.getElementById('val2');
 
+        // ── Wake Lock ──────────────────────────────────────────────
+        async function requestWakeLock() {
+            if (!('wakeLock' in navigator)) return;
+            try { wakeLock = await navigator.wakeLock.request('screen'); }
+            catch (e) { console.log('Wake lock failed:', e); }
+        }
+
+        async function releaseWakeLock() {
+            if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+        }
+
+        // Re-acquire when page becomes visible again while still connected
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible' && bleCharacteristic && !wakeLock) {
+                await requestWakeLock();
+            }
+        });
+
+        // ── UI state ───────────────────────────────────────────────
+        function setConnectedState(connected) {
+            connectBtn.style.display    = connected ? 'none' : '';
+            disconnectBtn.style.display = connected ? ''     : 'none';
+            estopBtn.style.display      = connected ? 'block': 'none';
+            document.querySelectorAll('.icon-btn').forEach(b => b.disabled = !connected);
+            slider1.disabled = !connected;
+            slider2.disabled = !connected;
+            statusText.style.color = connected ? '#4CAF50' : 'gray';
+            if (!connected && activeBtn) {
+                activeBtn.classList.remove('active');
+                activeBtn = null;
+            }
+        }
+
+        // ── Connect ────────────────────────────────────────────────
         connectBtn.addEventListener('click', async () => {
             try {
+                userDisconnected = false;
                 statusText.textContent = "Requesting Bluetooth Device...";
+                statusText.style.color = 'gray';
 
                 bleDevice = await navigator.bluetooth.requestDevice({
                     filters: [{ name: "ESP32 Control" }],
                     optionalServices: [serviceUUID]
                 });
 
-                statusText.textContent = "Connecting to GATT Server...";
-                const server = await bleDevice.gatt.connect();
-
-                const service = await server.getPrimaryService(serviceUUID);
-                bleCharacteristic = await service.getCharacteristic(characteristicUUID);
-
-                await bleCharacteristic.startNotifications();
-                bleCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-
-                statusText.textContent = "Connected!";
-                connectBtn.disabled = true;
-                updateButtons(true);
-                slider1.disabled = false;
-                slider2.disabled = false;
-
-                pollData = setInterval(writeSliderValue, 100);
-
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                await connectToDevice();
 
             } catch (error) {
                 console.log("Error:", error);
@@ -216,30 +251,76 @@
             }
         });
 
+        async function connectToDevice() {
+            statusText.textContent = "Connecting...";
+            const server  = await bleDevice.gatt.connect();
+            const service = await server.getPrimaryService(serviceUUID);
+            bleCharacteristic = await service.getCharacteristic(characteristicUUID);
+            await bleCharacteristic.startNotifications();
+            bleCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
+
+            reconnectDelay = 1000;
+            clearTimeout(reconnectTimer);
+            statusText.textContent = "Connected!";
+            setConnectedState(true);
+            pollData = setInterval(writeSliderValue, 100);
+            await requestWakeLock();
+        }
+
+        // ── Disconnect ─────────────────────────────────────────────
+        disconnectBtn.addEventListener('click', () => {
+            userDisconnected = true;
+            clearTimeout(reconnectTimer);
+            clearInterval(pollData);
+            if (bleDevice?.gatt.connected) bleDevice.gatt.disconnect();
+            bleCharacteristic = null;
+            setConnectedState(false);
+            statusText.textContent = "Disconnected";
+            releaseWakeLock();
+        });
+
+        // ── Auto-reconnect ─────────────────────────────────────────
+        function onDisconnected() {
+            clearInterval(pollData);
+            bleCharacteristic = null;
+            setConnectedState(false);
+            releaseWakeLock();
+
+            if (userDisconnected) {
+                statusText.textContent = "Disconnected";
+                return;
+            }
+
+            scheduleReconnect();
+        }
+
+        function scheduleReconnect() {
+            const delaySec = Math.round(reconnectDelay / 1000);
+            statusText.textContent = `Lost connection — retrying in ${delaySec}s…`;
+            statusText.style.color = '#FF9800';
+
+            reconnectTimer = setTimeout(async () => {
+                try {
+                    await connectToDevice();
+                } catch (e) {
+                    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+                    scheduleReconnect();
+                }
+            }, reconnectDelay);
+        }
+
+        // ── E-Stop ─────────────────────────────────────────────────
+        estopBtn.addEventListener('click', () => sendCommand("X"));
+
+        // ── BLE helpers ────────────────────────────────────────────
         async function sendCommand(value) {
             if (!bleCharacteristic) return;
-            const encoder = new TextEncoder();
-            await bleCharacteristic.writeValueWithoutResponse(encoder.encode(value));
-        }
-
-        function onDisconnected() {
-            statusText.textContent = "Disconnected";
-            statusText.style.color = "gray";
-            clearInterval(pollData);
-            connectBtn.disabled = false;
-            updateButtons(false);
-            slider1.disabled = true;
-            slider2.disabled = true;
-        }
-
-        function updateButtons(state) {
-            document.querySelectorAll('.icon-btn').forEach(btn => btn.disabled = !state);
+            await bleCharacteristic.writeValueWithoutResponse(new TextEncoder().encode(value));
         }
 
         function handleNotifications(event) {
             const value = new TextDecoder().decode(event.target.value);
-            console.log("Received Status: " + value);
-
+            console.log("Received:", value);
             if (value.startsWith('S')) {
                 const data = value.substring(1).split(',');
                 statusText.textContent = `Live Status - Length: ${data[0]}`;
@@ -250,12 +331,14 @@
         async function writeSliderValue() {
             val1Text.textContent = slider1.value;
             await sendCommand("A" + slider1.value);
-
             val2Text.textContent = slider2.value;
             await sendCommand("B" + slider2.value);
         }
 
-        async function sendBtn(id) {
+        async function sendBtn(id, el) {
+            if (activeBtn) activeBtn.classList.remove('active');
+            activeBtn = el;
+            el.classList.add('active');
             await sendCommand("C" + id);
         }
     </script>
